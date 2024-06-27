@@ -1,12 +1,12 @@
 # 原理
-1. docker push 镜像时, 发送一个消息
-
-2. 服务进程
-- 定时检查模块, 配置检查时间范围, 每小时检查, 如果没有收到push, 则标识失败, 发送构建失败的邮件, 
-- handler 服务模块, 当收到hook, 则进行自定义操作, 链式操作
-  - 拉取镜像, 下载对应的日志
-  - 确认构建的对应内容, 确认成功或者失败邮件
-
-3. 工具类
-- 发送邮件工具类, 根据邮件配置, 发送 smtp 邮件
-- 镜像操作工具类, 拉取镜像, 读取内容
+1. docker push 应用镜像之后, 收集下列文件, 使用 alpine 基础镜像, build 一个 hook 用的镜像, 将下列文件放入其中
+  - 构建日志: /build.log
+  - 构建结果: /mail.body (html格式)
+  - git commit日志: /git_commit.txt
+2. 设置 build-hook 项目, 推送不同 hook 镜像, 触发一个 webhook 发送到此进程: e.g.
+  - harbor.example.com/build-hook/demo-app:latest
+  - harbor.example.com/build-hook/demo-other:latest
+3. 服务进程
+- 处理 `/hook` 上下文请求, 发送 #2 生成的详情邮件
+- 一次性检查, 如果在截至时间之前没有收到对应 app(`hook.apps`) 的webhook 请求, 则发送构建失败的邮件,
+- 周期检查, 按照 cron 表达式定义进行周期性检查, 根据收到 hook 的情况进行统计, 发送不带附件的邮件
