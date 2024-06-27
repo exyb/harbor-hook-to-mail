@@ -71,7 +71,7 @@ func MailHandler(appName string, mailBodyFile string, attachments []string) erro
 	// }
 
 	// 发送带附件的邮件
-	err = sender.SendEmailWithAttachment(fmt.Sprintf(config.Email.Body.Subject, appName), config.Email.Receiver, config.Email.CC, string(mailBody), attachments)
+	err = sender.SendEmailWithAttachment(fmt.Sprintf(config.Email.Body.Subject, appName), config.Email.Receiver, config.Email.CC, string(mailBody), config.Email.Body.Type, attachments)
 	if err != nil {
 		log.Fatal(err)
 	}

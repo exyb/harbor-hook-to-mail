@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/smtp"
+	"strings"
 	"time"
 
 	"github.com/jordan-wright/email"
@@ -59,14 +60,19 @@ func (sender *EmailSender) SendEmail(to []string, subject, text string) error {
 	return retry(3, 2*time.Second, sendFunc)
 }
 
-func (sender *EmailSender) SendEmailWithAttachment(subject string, to []string, cc []string, text string, attachments []string) error {
+func (sender *EmailSender) SendEmailWithAttachment(subject string, to []string, cc []string, mailBody string, mailBodyType string, attachments []string) error {
 	e := email.NewEmail()
 	// e.From = fmt.Sprintf("%s <%s>", sender.Username, sender.Username)
 	e.From = sender.Username
 	e.Subject = subject
 	e.To = to
 	e.Cc = cc
-	e.Text = []byte(text)
+	if strings.ToUpper(mailBodyType) == "HTML" {
+		e.HTML = []byte(mailBody)
+	}
+	if strings.ToUpper(mailBodyType) == "TEXT" {
+		e.Text = []byte(mailBody)
+	}
 
 	for _, attachment := range attachments {
 		_, err := e.AttachFile(attachment)

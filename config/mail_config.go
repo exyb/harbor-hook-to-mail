@@ -18,6 +18,7 @@ type MailConfig struct {
 		Receiver []string `yaml:"receiver"`
 		CC       []string `yaml:"cc"`
 		Body     struct {
+			Type    string `yaml:"type"`
 			Subject string `yaml:"subject"`
 			Message string `yaml:"message"`
 		} `yaml:"body"`

@@ -13,6 +13,7 @@ email:
   receiver:
     - "user@example.com"
   body:
+    type: html
     subject: "Jenkins detail inform for %s"
     message: "This is a test email."
   attachments:
