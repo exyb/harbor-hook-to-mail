@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -77,6 +78,8 @@ func SetupRouter(r *gin.Engine) {
 
 	go resetStatCounters()
 	go informHookStatsByCronExpr()
+	go informHookStatsByExactTime()
+
 }
 
 func getAppName(path string) string {
@@ -207,17 +210,22 @@ func webHookHandler(c *gin.Context) {
 	// harbor可能会重试多次
 	savedSign := getHookSign(appName)
 	currentCreateTime := webhookRequest.EventData.Repository.DateCreated
-	currentSign, _ := json.Marshal(webhookRequest.EventData.Resources)
+	currentSign, _ := json.Marshal(webhookRequest.EventData)
 	if savedSign.Sign != string(currentSign) {
 		if currentCreateTime > savedSign.createTime {
 			setHookSign(appName, string(currentSign), currentCreateTime)
 		} else {
-			log.Printf("deprecated request from %s: %v", appName, resourceURL)
+			log.Printf("[ WebHandler ] [ deprecated request ] from %s: %v", appName, resourceURL)
+			log.Printf("[ WebHandler ] [ deprecated request ] current sign: %s", currentSign)
+			log.Printf("[ WebHandler ] [ deprecated request ] saved sign: %s", savedSign)
+			log.Printf("[ WebHandler ] [ deprecated request ] currentCreateTime %s, saved createTime: %s", currentCreateTime, savedSign.createTime)
 			c.JSON(http.StatusOK, gin.H{"status": "success"})
 			return
 		}
 	} else {
-		log.Printf("duplicate request from %s: %v", appName, resourceURL)
+		log.Printf("[ WebHandler ] [ deprecated request ] from %s: %v", appName, resourceURL)
+		log.Printf("[ WebHandler ] [ deprecated request ] current sign: %s", currentSign)
+		log.Printf("[ WebHandler ] [ deprecated request ] saved sign: %s", savedSign)
 		c.JSON(http.StatusOK, gin.H{"status": "success"})
 		return
 	}
@@ -245,7 +253,6 @@ func webHookHandler(c *gin.Context) {
 
 func resetStatCounters() {
 	var once sync.Once
-	config := getHookConfig()
 	resetHookStatsFunc := func() {
 		var wg sync.WaitGroup
 		hookStatsMap.Range(func(key, value interface{}) bool {
@@ -253,7 +260,7 @@ func resetStatCounters() {
 			hookStats, _ := value.(*HookStats)
 			go func(hookStats *HookStats) {
 				if err := resetSingleHookState(hookStats); err != nil {
-					log.Printf("Error handling hook stats for %s: %v", hookStats.Name, err)
+					log.Printf("[ ResetCounter ] Error handling hook stats for %s: %v", hookStats.Name, err)
 				}
 				wg.Done()
 			}(hookStats)
@@ -264,34 +271,66 @@ func resetStatCounters() {
 
 	for {
 		now := time.Now()
-		criticalTime, err := time.ParseInLocation("15:04", config.Hook.Audit.Before, time.Local)
-		if err != nil {
-			log.Fatalf("error parsing config.Hook.Audit.Before: %v", err)
-		}
-		criticalTime = time.Date(now.Year(), now.Month(), now.Day(), criticalTime.Hour(), criticalTime.Minute(), 0, 0, time.Local)
 
 		nextResetTime := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, now.Location())
 		resetDuration := nextResetTime.Sub(now)
 
-		log.Printf("Current time: %s\n", now.Format(time.RFC3339))
-		log.Printf("To time: %s\n", criticalTime.Format(time.RFC3339))
-		log.Printf("Next reset time: %s\n", nextResetTime.Format(time.RFC3339))
-		log.Printf("Waiting %.2f hours and %.2f minutes before reset statistics", math.Round(resetDuration.Hours()), (resetDuration % time.Hour).Minutes())
-
-		if now.Before(criticalTime) {
-			waitTime := criticalTime.Sub(now)
-			log.Printf("Waiting %.2f hours and %.2f minutes before validation trigger", math.Round(waitTime.Hours()), (waitTime % time.Hour).Minutes())
-
-			time.Sleep(waitTime)
-		}
-		time.Sleep(time.Minute * 1)
-
-		if now.After(criticalTime) {
-			log.Printf("Validation critical time has passed, trigger validation now")
-			once.Do(resetHookStatsFunc)
-		}
+		log.Printf("[ ResetCounter ] Current time: %s\n", now.Format(time.RFC3339))
+		log.Printf("[ ResetCounter ] Next reset time: %s\n", nextResetTime.Format(time.RFC3339))
+		log.Printf("[ ResetCounter ] Waiting %.2f hours and %.2f minutes before reset statistics", math.Round(resetDuration.Hours()), (resetDuration % time.Hour).Minutes())
 
 		time.Sleep(resetDuration)
+		log.Printf("[ ResetCounter ] Reset all stats counter now")
+		once.Do(resetHookStatsFunc)
+	}
+
+}
+
+func hookStatsInformerFunc() {
+	var wg sync.WaitGroup
+	hookStatsMap.Range(func(key, value interface{}) bool {
+		wg.Add(1)
+		hookStats, _ := value.(*HookStats)
+		go func(hookStats *HookStats) {
+			if err := informHookStats(hookStats); err != nil {
+				log.Printf("Error informing hook stats for %s: %v", hookStats.Name, err)
+			}
+			wg.Done()
+		}(hookStats)
+		return true
+	})
+	wg.Wait()
+}
+
+func informHookStatsByExactTime() {
+	var once sync.Once
+	config := getHookConfig()
+
+	for {
+		now := time.Now()
+		informTimeList := config.Hook.Audit.InformTime
+		sort.Strings(informTimeList)
+		for _, timeStr := range informTimeList {
+			criticalTime, err := time.ParseInLocation("15:04", timeStr, time.Local)
+			if err != nil {
+				log.Fatalf("[ InformByExactTime ] Error parsing time string %s, err: %v", timeStr, err)
+			}
+			criticalTime = time.Date(now.Year(), now.Month(), now.Day(), criticalTime.Hour(), criticalTime.Minute(), 0, 0, time.Local)
+
+			log.Printf("[ InformByExactTime ] Current time: %s, next inform time: %s\n", now.Format(time.RFC3339), criticalTime.Format(time.RFC3339))
+
+			if now.Before(criticalTime) || now.Equal(criticalTime) {
+				waitTime := criticalTime.Sub(now)
+				log.Printf("[ InformByExactTime ] Waiting %.2f hours and %.2f minutes before inform trigger", math.Round(waitTime.Hours()), (waitTime % time.Hour).Minutes())
+				time.Sleep(waitTime)
+
+				log.Printf("[ InformByExactTime ] Trigger inform at time %s", timeStr)
+				once.Do(hookStatsInformerFunc)
+			}
+
+			log.Printf("[ InformByExactTime ] Inform critical time %s has passed, ignore validation, wait for next inform time", timeStr)
+
+		}
 	}
 
 }
@@ -299,21 +338,7 @@ func resetStatCounters() {
 func informHookStatsByCronExpr() {
 	config := getHookConfig()
 	cronExpr := config.Hook.Audit.InformCron
-	hookStatsInformerFunc := func() {
-		var wg sync.WaitGroup
-		hookStatsMap.Range(func(key, value interface{}) bool {
-			wg.Add(1)
-			hookStats, _ := value.(*HookStats)
-			go func(hookStats *HookStats) {
-				if err := informHookStats(hookStats); err != nil {
-					log.Printf("Error informing hook stats for %s: %v", hookStats.Name, err)
-				}
-				wg.Done()
-			}(hookStats)
-			return true
-		})
-		wg.Wait()
-	}
+
 	c := cron.New(cron.WithSeconds()) // 启用秒级精度
 
 	// 解析cron表达式并添加任务
@@ -329,10 +354,10 @@ func informHookStatsByCronExpr() {
 
 func resetSingleHookState(hookStats *HookStats) error {
 
-	if err := informHookStats(hookStats); err != nil {
-		log.Printf("Inform for hook failed %v", err)
-		return err
-	}
+	// if err := informHookStats(hookStats); err != nil {
+	// 	log.Printf("Inform for hook failed %v", err)
+	// 	return err
+	// }
 
 	// 重置统计计数
 	resetHookStats(hookStats.Name)

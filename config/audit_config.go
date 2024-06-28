@@ -10,8 +10,8 @@ type HookConfig struct {
 	Hook struct {
 		ContextPath string `yaml:"context-path"`
 		Audit       struct {
-			Before     string `yaml:"daily-inform-before"`
-			InformCron string `yaml:"inform-cron"`
+			InformTime []string `yaml:"inform-time"`
+			InformCron string   `yaml:"inform-cron"`
 		} `yaml:"audit"`
 		Apps []string `yaml:"apps"`
 	} `yaml:"hook"`

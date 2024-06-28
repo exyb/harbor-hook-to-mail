@@ -23,7 +23,10 @@ hook:
   - "demo-app"
   - "demo-ui"
   audit:
-    daily-inform-before:  22:22
+    inform-time:
+    - 09:50
+    - 11:20
+    - 15:00
     inform-cron: "0 30 * * * *"
 server:
   port: 8002
