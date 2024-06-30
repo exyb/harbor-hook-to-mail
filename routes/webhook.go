@@ -3,6 +3,7 @@ package routes
 import (
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"math"
 	"net/http"
@@ -22,7 +23,7 @@ import (
 
 type Once struct {
 	Sign       string
-	createTime int64
+	CreateTime string
 }
 
 type HookStats struct {
@@ -33,8 +34,9 @@ type HookStats struct {
 }
 
 var (
-	hookStatsMap sync.Map
-	hookConfig   *HookConfig
+	hookStatsMap      sync.Map
+	hookConfig        *HookConfig
+	hookStatsJsonFile = "stats.json"
 )
 
 // var (
@@ -70,6 +72,12 @@ func SetupRouter(r *gin.Engine) {
 		getOrCreateHookStats(app)
 	}
 
+	if err := LoadMapFromFile(); err != nil {
+		log.Fatalf("Failed to load map from file: %v", err)
+	}
+	log.Println("Print content of saved stats afer loaded from file")
+	PrintHookStatsMap()
+
 	r.POST(hookConfig.Hook.ContextPath, webHookHandler)
 	// hookGroup := r.Group("/hook")
 	// {
@@ -79,13 +87,47 @@ func SetupRouter(r *gin.Engine) {
 	go resetStatCounters()
 	go informHookStatsByCronExpr()
 	go informHookStatsByExactTime()
+	go saveHookStatsToFile()
 
+}
+
+// PrintHookStatsMap 打印 sync.Map 的内容
+func PrintHookStatsMap() {
+	hookStatsMap.Range(func(key, value interface{}) bool {
+		fmt.Printf("%s: %v\n", key, value)
+		return true
+	})
+}
+
+func PrintMap(mapObject map[string]interface{}) bool {
+	for key, value := range mapObject {
+		fmt.Printf("%s: %v\n", key, value)
+		return true
+	}
+	return false
+}
+
+func saveHookStatsToFile() {
+	for {
+		if err := SaveMapToFile(); err != nil {
+			fmt.Printf("Error saving map to file: %v\n", err)
+		}
+		time.Sleep(time.Minute * 1)
+	}
 }
 
 func getAppName(path string) string {
 	parts := strings.Split(strings.Split(path, ":")[0], "/")
 	if len(parts) < 3 {
 		return ""
+	}
+	return parts[len(parts)-1]
+}
+
+func getTimeFromTag(tagName string) string {
+	parts := strings.Split(tagName, "_")
+	if len(parts) < 2 {
+		return time.Now().Format("20060102150405")
 	}
 	return parts[len(parts)-1]
 }
@@ -112,6 +154,8 @@ func getHookConfig() *HookConfig {
 func getOrCreateHookStats(app string) *HookStats {
 	var stats *HookStats
 	value, ok := hookStatsMap.Load(app)
+	// load previous status Result
+
 	if !ok {
 		stats = &HookStats{
 			Name:   app,
@@ -119,7 +163,7 @@ func getOrCreateHookStats(app string) *HookStats {
 			Errors: 0,
 			Once: Once{
 				Sign:       "",
-				createTime: 0,
+				CreateTime: "20060101000000",
 			},
 		}
 		_, _ = hookStatsMap.LoadOrStore(app, stats)
@@ -129,16 +173,62 @@ func getOrCreateHookStats(app string) *HookStats {
 	return stats
 }
 
+func SaveMapToFile() error {
+	data := make(map[string]interface{})
+
+	// 将 sync.Map 的内容复制到普通 map
+	hookStatsMap.Range(func(key, value interface{}) bool {
+		data[key.(string)] = value
+		return true
+	})
+
+	// 序列化为 JSON
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	// 写入文件
+	return ioutil.WriteFile(hookStatsJsonFile, jsonData, 0644)
+}
+
+// LoadMapFromFile 从文件中读取并恢复到 sync.Map
+func LoadMapFromFile() error {
+	file, err := os.Open(hookStatsJsonFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // 文件不存在不是错误
+		}
+		return err
+	}
+	defer file.Close()
+
+	jsonData, err := ioutil.ReadAll(file)
+	if err != nil {
+		return err
+	}
+
+	data := make(map[string]interface{})
+	if err := json.Unmarshal(jsonData, &data); err != nil {
+		return err
+	}
+
+	// 将数据恢复到 sync.Map
+	for key, value := range data {
+		hookStatsMap.Store(key, value)
+	}
+
+	return nil
+}
 func getHookSign(app string) Once {
 	stats := getOrCreateHookStats(app)
 	return stats.Once
 }
 
-func setHookSign(app string, sign string, createTime int64) {
+func setHookSign(app string, sign string, createTime string) {
 	stats := getOrCreateHookStats(app)
 	stats.Once = Once{
 		Sign:       sign,
-		createTime: createTime,
+		CreateTime: createTime,
 	}
 }
 
@@ -209,23 +299,24 @@ func webHookHandler(c *gin.Context) {
 
 	// harbor可能会重试多次
 	savedSign := getHookSign(appName)
-	currentCreateTime := webhookRequest.EventData.Repository.DateCreated
+	currentCreateTime := getTimeFromTag(resourceURL)
+	// savedCreatedTime
 	currentSign, _ := json.Marshal(webhookRequest.EventData)
 	if savedSign.Sign != string(currentSign) {
-		if currentCreateTime > savedSign.createTime {
+		if currentCreateTime > savedSign.CreateTime {
 			setHookSign(appName, string(currentSign), currentCreateTime)
 		} else {
 			log.Printf("[ WebHandler ] [ deprecated request ] from %s: %v", appName, resourceURL)
 			log.Printf("[ WebHandler ] [ deprecated request ] current sign: %s", currentSign)
 			log.Printf("[ WebHandler ] [ deprecated request ] saved sign: %s", savedSign)
-			log.Printf("[ WebHandler ] [ deprecated request ] currentCreateTime %s, saved createTime: %s", currentCreateTime, savedSign.createTime)
+			log.Printf("[ WebHandler ] [ deprecated request ] currentCreateTime %s, saved createTime: %s", currentCreateTime, savedSign.CreateTime)
 			c.JSON(http.StatusOK, gin.H{"status": "success"})
 			return
 		}
 	} else {
-		log.Printf("[ WebHandler ] [ deprecated request ] from %s: %v", appName, resourceURL)
-		log.Printf("[ WebHandler ] [ deprecated request ] current sign: %s", currentSign)
-		log.Printf("[ WebHandler ] [ deprecated request ] saved sign: %s", savedSign)
+		log.Printf("[ WebHandler ] [ duplicate request ] from %s: %v", appName, resourceURL)
+		log.Printf("[ WebHandler ] [ duplicate request ] current sign: %s", currentSign)
+		log.Printf("[ WebHandler ] [ duplicate request ] saved sign: %s", savedSign)
 		c.JSON(http.StatusOK, gin.H{"status": "success"})
 		return
 	}
@@ -277,7 +368,7 @@ func resetStatCounters() {
 
 		log.Printf("[ ResetCounter ] Current time: %s\n", now.Format(time.RFC3339))
 		log.Printf("[ ResetCounter ] Next reset time: %s\n", nextResetTime.Format(time.RFC3339))
-		log.Printf("[ ResetCounter ] Waiting %.2f hours and %.2f minutes before reset statistics", math.Round(resetDuration.Hours()), (resetDuration % time.Hour).Minutes())
+		log.Printf("[ ResetCounter ] Waiting %.2f hours and %.2f minutes before reset statistics", math.Floor(resetDuration.Hours()), (resetDuration % time.Hour).Minutes())
 
 		time.Sleep(resetDuration)
 		log.Printf("[ ResetCounter ] Reset all stats counter now")
@@ -306,10 +397,10 @@ func informHookStatsByExactTime() {
 	var once sync.Once
 	config := getHookConfig()
 
+	informTimeList := config.Hook.Audit.InformTime
+	sort.Strings(informTimeList)
 	for {
 		now := time.Now()
-		informTimeList := config.Hook.Audit.InformTime
-		sort.Strings(informTimeList)
 		for _, timeStr := range informTimeList {
 			criticalTime, err := time.ParseInLocation("15:04", timeStr, time.Local)
 			if err != nil {
@@ -321,7 +412,7 @@ func informHookStatsByExactTime() {
 
 			if now.Before(criticalTime) || now.Equal(criticalTime) {
 				waitTime := criticalTime.Sub(now)
-				log.Printf("[ InformByExactTime ] Waiting %.2f hours and %.2f minutes before inform trigger", math.Round(waitTime.Hours()), (waitTime % time.Hour).Minutes())
+				log.Printf("[ InformByExactTime ] Waiting %.2f hours and %.2f minutes before inform trigger", math.Floor(waitTime.Hours()), (waitTime % time.Hour).Minutes())
 				time.Sleep(waitTime)
 
 				log.Printf("[ InformByExactTime ] Trigger inform at time %s", timeStr)
@@ -329,8 +420,13 @@ func informHookStatsByExactTime() {
 			}
 
 			log.Printf("[ InformByExactTime ] Inform critical time %s has passed, ignore validation, wait for next inform time", timeStr)
-
 		}
+
+		now = time.Now()
+		nextDayTime := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, now.Location())
+		waitDuration := nextDayTime.Sub(now)
+		log.Printf("[ InformByExactTime ] Waiting %.2f hours and %.2f minutes before new daily routine", math.Floor(waitDuration.Hours()), (waitDuration % time.Hour).Minutes())
+		time.Sleep(waitDuration)
 	}
 
 }
@@ -339,17 +435,19 @@ func informHookStatsByCronExpr() {
 	config := getHookConfig()
 	cronExpr := config.Hook.Audit.InformCron
 
-	c := cron.New(cron.WithSeconds()) // 启用秒级精度
+	if len(cronExpr) > 0 {
+		c := cron.New(cron.WithSeconds()) // 启用秒级精度
 
-	// 解析cron表达式并添加任务
-	_, err := c.AddFunc(cronExpr, hookStatsInformerFunc)
-	if err != nil {
-		fmt.Println("解析cron表达式时出错:", err)
-		return
+		// 解析cron表达式并添加任务
+		_, err := c.AddFunc(cronExpr, hookStatsInformerFunc)
+		if err != nil {
+			fmt.Println("解析cron表达式时出错:", err)
+			return
+		}
+
+		// 启动cron调度器
+		c.Start()
 	}
-
-	// 启动cron调度器
-	c.Start()
 }
 
 func resetSingleHookState(hookStats *HookStats) error {
