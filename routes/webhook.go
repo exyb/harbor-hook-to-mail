@@ -169,8 +169,54 @@ func getOrCreateHookStats(app string) *HookStats {
 		_, _ = hookStatsMap.LoadOrStore(app, stats)
 		return stats
 	}
-	stats, _ = value.(*HookStats)
-	return stats
+	// 第一次是一个 结构体, 第二次就是具体对象了
+	hookStats, ok := value.(*HookStats)
+	if ok {
+		return hookStats
+	}
+	// 类型断言, 从 any 转为 map
+	data, ok := value.(map[string]interface{})
+	if ok {
+		// 类型转换
+		hookStats, err := convertToHookStats(data)
+		if err != nil {
+			fmt.Println("Error converting to HookStats:", err)
+			return nil
+		}
+
+		return &hookStats
+	}
+	return nil
+
+}
+
+func convertToHookStats(data map[string]interface{}) (HookStats, error) {
+	onceMap, ok := data["Once"].(map[string]interface{})
+	if !ok {
+		return HookStats{}, fmt.Errorf("invalid type for Once field")
+	}
+
+	createTime, ok := onceMap["CreateTime"].(string)
+	if !ok {
+		return HookStats{}, fmt.Errorf("invalid type for CreateTime field")
+	}
+
+	sign, ok := onceMap["Sign"].(string)
+	if !ok {
+		return HookStats{}, fmt.Errorf("invalid type for Sign field")
+	}
+
+	once := Once{
+		CreateTime: createTime,
+		Sign:       sign,
+	}
+
+	return HookStats{
+		Name:   data["Name"].(string),
+		Calls:  int32(data["Calls"].(float64)),
+		Errors: int32(data["Errors"].(float64)),
+		Once:   once,
+	}, nil
 }
 
 func SaveMapToFile() error {
@@ -214,7 +260,17 @@ func LoadMapFromFile() error {
 
 	// 将数据恢复到 sync.Map
 	for key, value := range data {
-		hookStatsMap.Store(key, value)
+		data, ok := value.(map[string]interface{})
+		if ok {
+			// 类型转换
+			hookStats, err := convertToHookStats(data)
+			if err != nil {
+				fmt.Println("Error converting to HookStats:", err)
+				return nil
+			}
+
+			hookStatsMap.Store(key, &hookStats)
+		}
 	}
 
 	return nil
@@ -355,6 +411,10 @@ func resetStatCounters() {
 				}
 				wg.Done()
 			}(hookStats)
+			//清理 stats.json文件
+			if err := SaveMapToFile(); err != nil {
+				fmt.Printf("Error saving map to file: %v\n", err)
+			}
 			return true
 		})
 		wg.Wait()
@@ -401,7 +461,7 @@ func informHookStatsByExactTime() {
 	sort.Strings(informTimeList)
 	for {
 		now := time.Now()
-		for _, timeStr := range informTimeList {
+		for i, timeStr := range informTimeList {
 			criticalTime, err := time.ParseInLocation("15:04", timeStr, time.Local)
 			if err != nil {
 				log.Fatalf("[ InformByExactTime ] Error parsing time string %s, err: %v", timeStr, err)
@@ -414,12 +474,17 @@ func informHookStatsByExactTime() {
 				waitTime := criticalTime.Sub(now)
 				log.Printf("[ InformByExactTime ] Waiting %.2f hours and %.2f minutes before inform trigger", math.Floor(waitTime.Hours()), (waitTime % time.Hour).Minutes())
 				time.Sleep(waitTime)
-
-				log.Printf("[ InformByExactTime ] Trigger inform at time %s", timeStr)
+				log.Printf("[ InformByExactTime ] Inform critical time %s has passed, trigger inform", timeStr)
 				once.Do(hookStatsInformerFunc)
+			} else {
+				// 如果当前时间大于最大的时间, 则执行一次
+				if i == len(informTimeList)-1 {
+					log.Printf("[ InformByExactTime ] inform at least once after %s", timeStr)
+					once.Do(hookStatsInformerFunc)
+				} else {
+					log.Printf("[ InformByExactTime ] ignore validation for %s, wait for next inform time", timeStr)
+				}
 			}
-
-			log.Printf("[ InformByExactTime ] Inform critical time %s has passed, ignore validation, wait for next inform time", timeStr)
 		}
 
 		now = time.Now()

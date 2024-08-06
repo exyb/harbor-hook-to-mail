@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"regexp"
 	"sync"
 	"time"
 
@@ -61,6 +62,20 @@ func MailHandler(appName string, mailBodyFile string, attachments []string) erro
 		return err
 	}
 
+	// 定义正则表达式来匹配 "构建结果: SUCCESS" 或 "构建结果: FAILURE"
+	re := regexp.MustCompile(`构建结果: (SUCCESS|FAILURE)`)
+	// 查找所有匹配项
+	matches := re.FindAllStringSubmatch(string(mailBody), 1)
+	var buildResult string
+	if len(matches) > 0 {
+		if matches[0][1] == "SUCCESS" {
+			buildResult = "成功"
+		} else if matches[0][1] == "FAILURE" {
+			buildResult = "失败"
+		}
+	} else {
+		buildResult = "未知"
+	}
 	config := GetMailConfig()
 	sender := GetMailSender(config)
 
@@ -71,7 +86,9 @@ func MailHandler(appName string, mailBodyFile string, attachments []string) erro
 	// }
 
 	// 发送带附件的邮件
-	err = sender.SendEmailWithAttachment(fmt.Sprintf(config.Email.Body.Subject, appName), config.Email.Receiver, config.Email.CC, string(mailBody), config.Email.Body.Type, attachments)
+	mailTitle := fmt.Sprintf(config.Email.Body.Subject, appName, time.Now().Format("2006-01-02"), buildResult)
+
+	err = sender.SendEmailWithAttachment(mailTitle, config.Email.Receiver, config.Email.CC, string(mailBody), config.Email.Body.Type, attachments)
 	if err != nil {
 		log.Fatal(err)
 	}

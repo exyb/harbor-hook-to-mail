@@ -1,0 +1,32 @@
+registry:
+  address: x.x.x.x
+  auth:
+    username: hook
+    password: brCSwnqtc9JjHFM1EIVY5Iubpqd8/TlwRxN7rJbwyEaqfvuNKQ==
+email:
+  type: smtp
+  server: mail.example.com
+  port: 25
+  sender:
+    address: "user@example.com"
+    password: wujkQX7DW59+EwMu7lIOMyi5VXboAbtb9gFn3E+4wu0e4m+u4VGy
+  receiver:
+    - "user@example.com"
+  body:
+    type: html
+    subject: "Jenkins detail inform for %s on %s"
+    message: "This is a test email."
+  attachments:
+hook:
+  context-path: /hook
+  apps:
+  - "demo-app"
+  - "demo-ui"
+  audit:
+    inform-time:
+    - 09:50
+    - 11:20
+    - 15:00
+    inform-cron: "0 30 * * * *"
+server:
+  port: 8002

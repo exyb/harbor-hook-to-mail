@@ -26,6 +26,8 @@ type MailConfig struct {
 	} `yaml:"email"`
 }
 
+
+
 func LoadEmailConfig(path string) (*MailConfig, error) {
 	config := &MailConfig{}
 	data, err := ioutil.ReadFile(path)

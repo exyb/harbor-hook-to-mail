@@ -14,7 +14,7 @@ email:
     - "user@example.com"
   body:
     type: html
-    subject: "Jenkins detail inform for %s"
+    subject: "Jenkins detail inform for %s on %s"
     message: "This is a test email."
   attachments:
 hook:
