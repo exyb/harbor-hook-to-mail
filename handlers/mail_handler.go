@@ -100,7 +100,7 @@ func SendWarnEmail(appName string) error {
 	config := GetMailConfig()
 
 	sender := GetMailSender(config)
-	mailTitle := fmt.Sprintf("Jenkins interval inform for %s: Warning - hook received, but no key info for %s", time.Now().Format("2006-01-02"), appName)
+	mailTitle := fmt.Sprintf("构建警告定时通知 - %s: 应用 %s 成功构建但是存在报错", time.Now().Format("2006-01-02"), appName)
 	// 发送简单文本邮件
 	err := sender.SendEmail(config.Email.Receiver, mailTitle, "")
 	if err != nil {
@@ -115,9 +115,9 @@ func SendSuccessEmail(appName string) error {
 	config := GetMailConfig()
 
 	sender := GetMailSender(config)
-	mailTitle := fmt.Sprintf("Jenkins interval inform for %s: Success - hook received for %s", time.Now().Format("2006-01-02"), appName)
+	mailTitle := fmt.Sprintf("构建定时通知 - %s: 应用 %s 成功完成构建", time.Now().Format("2006-01-02"), appName)
 	// 发送简单文本邮件
-	err := sender.SendEmail(config.Email.Receiver, mailTitle, "")
+	err := sender.SendEmail(config.Email.Receiver, mailTitle, "请参考构建环境日志进行详细排查")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -130,9 +130,9 @@ func SendFailEmail(appName string) error {
 	config := GetMailConfig()
 
 	sender := GetMailSender(config)
-	mailTitle := fmt.Sprintf("Jenkins interval inform of %s: Failure - no successful build for %s", time.Now().Format("2006-01-02"), appName)
+	mailTitle := fmt.Sprintf("构建失败定时通知 - %s: 应用 %s 没有收到成功构建信息", time.Now().Format("2006-01-02"), appName)
 	// 发送简单文本邮件
-	err := sender.SendEmail(config.Email.Receiver, mailTitle, "")
+	err := sender.SendEmail(config.Email.Receiver, mailTitle, "请结合前序定时通知邮件和当天首封详情邮件, 并参考构建环境日志进行排查")
 	if err != nil {
 		log.Fatal(err)
 	}

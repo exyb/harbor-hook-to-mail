@@ -17,6 +17,7 @@ import (
 	. "github.com/exyb/harbor-hook-to-mail/config"
 	"github.com/exyb/harbor-hook-to-mail/handlers"
 	"github.com/robfig/cron/v3"
+	"golang.org/x/exp/rand"
 
 	"github.com/gin-gonic/gin"
 )
@@ -439,10 +440,12 @@ func resetStatCounters() {
 
 func hookStatsInformerFunc() {
 	var wg sync.WaitGroup
+	jitterTime := time.Duration(rand.Intn(10)) * time.Second
 	hookStatsMap.Range(func(key, value interface{}) bool {
 		wg.Add(1)
 		hookStats, _ := value.(*HookStats)
 		go func(hookStats *HookStats) {
+			time.Sleep(jitterTime)
 			if err := informHookStats(hookStats); err != nil {
 				log.Printf("Error informing hook stats for %s: %v", hookStats.Name, err)
 			}
@@ -543,13 +546,13 @@ func informHookStats(hookStats *HookStats) error {
 			log.Printf("Failed to send warning email: %v", err)
 			return err
 		}
-	} else {
-		// 处理成功, 也发送邮件, 详情邮件在触发的时候已经发过了
-		log.Printf("Hook calls successful today for %s\n", hookStats.Name)
-		if err := handlers.SendSuccessEmail(hookStats.Name); err != nil {
-			log.Printf("Failed to send warning email: %v", err)
-			return err
-		}
+		// } else {
+		// 	// 处理成功, 也发送邮件, 详情邮件在触发的时候已经发过了
+		// 	log.Printf("Hook calls successful today for %s\n", hookStats.Name)
+		// 	if err := handlers.SendSuccessEmail(hookStats.Name); err != nil {
+		// 		log.Printf("Failed to send warning email: %v", err)
+		// 		return err
+		// 	}
 	}
 	return nil
 }
